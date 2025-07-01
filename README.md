@@ -145,13 +145,6 @@ New Cluster B: [Entity3] (isolated due to non-match with Entity1)
 
 The human decision to mark Edge1-3 as non-match broke Entity3 away from the cluster.
 
-### Benefits of This Approach
-
-1. **Human Intelligence Preservation**: Expert reviewer decisions are permanently encoded in the clustering
-2. **Audit Trail**: Timestamped export tables show exactly what decisions led to what clusters
-3. **Consistency**: Once a human says two entities are different, they never get clustered together
-4. **Scalability**: Parallel processing allows multiple reviewers to work simultaneously
-
 ## Understanding the Data
 
 ### Edge Visualization Tables
@@ -194,12 +187,6 @@ The final `cluster_confirmed_status` in exports follows this priority:
   - Timestamp of export generation
 - **Organizations sheet**: Entity-level data with cluster assignments
 - **Services sheet**: Service-level data with taxonomy terms and addresses
-
-### HTML Dashboard
-- `review_dashboard.html`: Real-time progress tracking
-- Auto-refreshes every 5 minutes
-- Color-coded progress indicators
-- User-specific completion statistics
 
 ## Development
 
@@ -247,24 +234,6 @@ let is_valid_connection = match status {
 Enable detailed logging:
 ```bash
 RUST_LOG=debug cargo run --bin export
-```
-
-### Common Issues
-- **Empty clusters**: Check if all edges were marked as CONFIRMED_NON_MATCH
-- **Unexpected cluster sizes**: Review edge filtering logic and confirmed_status values
-- **Performance**: Large datasets may need connection pool tuning
-
-### Verification Queries
-```sql
--- Check reclustering results
-SELECT cluster_confirmed_status, COUNT(*) 
-FROM "wa211_to_wric_exports"."hannah_entity_export_20250101120000" 
-GROUP BY cluster_confirmed_status;
-
--- Verify edge filtering worked correctly  
-SELECT confirmed_status, COUNT(*)
-FROM "wa211_to_wric_exports"."hannah_entity_edge_visualization_export_20250101120000"
-GROUP BY confirmed_status;
 ```
 
 ## License
