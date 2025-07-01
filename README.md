@@ -4,13 +4,6 @@ This system provides tools for tracking human review progress on entity and serv
 
 ## Features
 
-### 📊 Review Dashboard
-- **Real-time progress tracking** for edge visualization reviews
-- **Per-user statistics** showing pending vs. completed reviews
-- **Visual progress bars** and completion percentages  
-- **Auto-refreshing HTML dashboard** (updates every 5 minutes)
-- **Mobile-responsive design** for viewing on any device
-
 ### 📋 Data Export
 - **Excel export** with separate sheets for Organizations and Services
 - **Progress Overview tab** with dashboard data embedded in Excel workbooks
