@@ -44,25 +44,7 @@ RUST_LOG=info
 
 ## Usage
 
-### 1. Generate Review Dashboard Only
-
-To quickly check review progress without running exports:
-
-```bash
-# Generate dashboard with default filename (review_dashboard.html)
-cargo run --bin dashboard
-
-# Generate dashboard with custom filename
-cargo run --bin dashboard custom_dashboard.html
-```
-
-This creates an HTML file that shows:
-- **Overall progress** across all users
-- **Per-user breakdown** of entity and service review stats
-- **Pending review counts** to track remaining work
-- **Completion percentages** and progress bars
-
-### 2. Full Export Process (includes Dashboard)
+### 1. Full Export Process (includes Dashboard)
 
 To run the complete export process:
 
@@ -75,25 +57,6 @@ This will:
 2. 🔄 Run re-clustering based on user opinions  
 3. 📊 Export data to Excel files for each user
 4. 🎯 Regenerate dashboard with updated data
-
-### 3. Dashboard Features
-
-The generated HTML dashboard includes:
-
-#### Review Status Tracking
-- **Pending Review**: Edges awaiting human review (`PENDING_REVIEW`)
-- **Confirmed Match**: Edges marked as true duplicates (`CONFIRMED_MATCH`) 
-- **Confirmed Non-Match**: Edges marked as not duplicates (`CONFIRMED_NON_MATCH`)
-
-#### Visual Progress Indicators
-- **Progress bars** showing completion percentage
-- **Color-coded status**: Green for complete, Orange for pending
-- **Grid layout** comparing entity vs. service progress
-
-#### Auto-Refresh
-- Dashboard automatically refreshes every 5 minutes
-- Timestamp shows last update time
-- No manual refresh needed for monitoring
 
 ## Understanding the Data
 
@@ -114,11 +77,6 @@ The final `cluster_confirmed_status` in exports follows this priority:
 3. **NO_MATCH**: Single entity with no edges or no cluster assigned
 
 ## File Outputs
-
-### Dashboard
-- `review_dashboard.html` - Interactive HTML dashboard
-- Auto-refreshes every 5 minutes
-- Mobile-responsive design
 
 ### Excel Exports  
 - `{user_prefix}_export_{timestamp}.xlsx` files
@@ -143,13 +101,6 @@ let users = vec![
 ];
 ```
 
-### Customizing Dashboard
-Modify the CSS in `dashboard.rs` function `generate_html_dashboard()` to change:
-- Colors and styling
-- Layout and grid structure  
-- Progress bar appearance
-- Responsive breakpoints
-
 ### Database Schema
 The system expects these table patterns:
 - `{schema}.{user_prefix}_entity_edge_visualization`
@@ -168,17 +119,6 @@ Enable detailed logging:
 RUST_LOG=debug cargo run --bin dashboard
 ```
 
-### Common Issues
-
-**Dashboard shows no data**: Check database connection and table names
-**Zero review counts**: Verify `confirmed_status` column has expected values
-**Dashboard doesn't load**: Check HTML file permissions and browser console
-
-### Performance
-- Dashboard generation typically takes < 5 seconds
-- Full export process scales with data size (parallel user processing)
-- HTML dashboard is lightweight (< 100KB) and loads quickly
-
 ## License
 
-[Add your license information here]
+GPL License with specifics pending
