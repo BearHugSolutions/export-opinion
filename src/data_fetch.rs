@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use log::{info, debug};
-use tokio_postgres::Client;
 use std::collections::HashMap;
 use crate::db_connect::PgPool;
 use crate::models::{OrganizationExportRow, ServiceExportRow};

@@ -3,13 +3,24 @@ name = "export-opinion"
 version = "0.1.0"
 edition = "2021"
 
+# Main export application
+[[bin]]
+name = "export"
+path = "main.rs"
+
+# Standalone dashboard application
+[[bin]]
+name = "dashboard"
+path = "dashboard_main.rs"
+
 [dependencies]
+# Existing dependencies (keeping as-is)
 anyhow = "1.0.98"
 log = "0.4.27"
-env_logger = "0.11.3" # Added for logger initialization
+env_logger = "0.11.3"
 chrono = { version = "0.4.40", features = ["serde"] }
 uuid = { version = "1.16.0", features = ["v4", "serde"] }
-tokio = { version = "1.44.2", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] } # Added "fs" feature for dashboard file writing
 tokio-postgres = { version = "0.7.13", features = ["with-serde_json-1", "with-chrono-0_4", "with-uuid-1"] }
 bb8 = "0.8.6"
 bb8-postgres = "0.8.1"
@@ -21,3 +32,6 @@ regex = "1.7.0"
 indicatif = "0.17"
 rust_xlsxwriter = "0.89.0"
 futures = "0.3.31"
+
+[dev-dependencies]
+tokio-test = "0.4"

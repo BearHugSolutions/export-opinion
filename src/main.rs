@@ -4,25 +4,35 @@ use log::info;
 use std::path::PathBuf;
 use futures::future::join_all; // Import join_all for parallel execution
 
-mod db_connect; // Provided utility
-mod env_loader; // Provided utility
-mod models;
-mod export_schema;
-mod reclustering;
-mod data_fetch;
-mod excel_writer;
+use export_opinion::db_connect;
+use export_opinion::dashboard;
+use export_opinion::env_loader;
+use export_opinion::export_schema;
+use export_opinion::reclustering;
+use export_opinion::data_fetch;
+use export_opinion::excel_writer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load environment variables (e.g., .env file)
+    // Load environment variables using your existing loader
     env_loader::load_env();
     env_logger::init(); // Initialize logger
 
     info!("Starting data export process.");
 
-    // Establish database connection pool
+    // Establish database connection pool using your existing connection logic
     let pool = db_connect::connect().await?;
     info!("Database connection pool established.");
+
+    // Generate dashboard first (before any schema changes)
+    let dashboard_path = PathBuf::from("review_dashboard.html");
+    info!("Generating review dashboard...");
+    match dashboard::generate_dashboard(&pool, &dashboard_path).await {
+        Ok(()) => info!("Dashboard generated successfully at: {:?}", dashboard_path),
+        Err(e) => {
+            log::warn!("Failed to generate dashboard: {}. Continuing with exports...", e);
+        }
+    }
 
     // Create the export schema once before processing users
     let schema_client = pool.get().await?;
@@ -81,9 +91,13 @@ async fn main() -> Result<()> {
             let svc_data = data_fetch::fetch_service_export_data(&pool_clone, &user_prefix_clone, &timestamp_suffix).await?;
             info!("Fetched {} service records.", svc_data.len());
 
-            // Write data to Excel file
+            // Fetch dashboard data for progress overview tab
+            info!("Fetching dashboard data for progress overview...");
+            let dashboard_data = dashboard::get_dashboard_data(&pool_clone).await.ok(); // Use .ok() to make it optional
+
+            // Write data to Excel file (including progress overview)
             info!("Writing data to Excel file: {:?}", export_file_path);
-            excel_writer::write_excel_file(&export_file_path, org_data, svc_data).await?; 
+            excel_writer::write_excel_file(&export_file_path, org_data, svc_data, dashboard_data).await?; 
             info!("Export for user {} completed successfully.", username_clone);
 
             Ok::<(), anyhow::Error>(()) // Return a Result from the spawned task
@@ -107,6 +121,13 @@ async fn main() -> Result<()> {
                 eprintln!("Join error in user export task: {:?}", e);
             }
         }
+    }
+
+    // Generate dashboard again after exports complete (to reflect any changes)
+    info!("Regenerating dashboard after exports...");
+    match dashboard::generate_dashboard(&pool, &dashboard_path).await {
+        Ok(()) => info!("Final dashboard generated successfully at: {:?}", dashboard_path),
+        Err(e) => log::warn!("Failed to regenerate final dashboard: {}", e),
     }
 
     info!("All exports completed.");
