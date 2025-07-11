@@ -3,27 +3,35 @@ use log::{info, debug};
 use std::collections::HashMap;
 use crate::db_connect::PgPool;
 use crate::models::{OrganizationExportRow, ServiceExportRow};
+use crate::team_utils::{TeamInfo, create_dataset_filter_clause};
 
 const EXPORT_SCHEMA: &str = "wa211_to_wric_exports";
 
 /// Fetches data for the organization-level export.
+/// Now filters by team's whitelisted datasets
 pub async fn fetch_organization_export_data(
     pool: &PgPool,
     user_prefix: &str,
     timestamp_suffix: &str,
+    team_info: &TeamInfo,
 ) -> Result<Vec<OrganizationExportRow>> {
-    info!("Fetching organization export data for user '{}'...", user_prefix);
+    info!("Fetching organization export data for user '{}' filtered by whitelisted datasets...", user_prefix);
     let client = pool.get().await.context("Failed to get DB client for organization data fetch")?;
 
     let cluster_table = format!("{}_entity_group_cluster_export_{}", user_prefix, timestamp_suffix);
     let edge_viz_table = format!("{}_entity_edge_visualization_export_{}", user_prefix, timestamp_suffix);
     let group_table = format!("{}_entity_group_export_{}", user_prefix, timestamp_suffix);
 
-    // Query that properly handles user opinion-based clusters
+    // Create dataset filter clause for entities
+    let (dataset_filter, filter_params) = create_dataset_filter_clause(
+        "e", "source_system", &team_info.whitelisted_datasets, 1
+    );
+
+    // Query that properly handles user opinion-based clusters with dataset filtering
     let query = format!(
         r#"
         WITH EntityClusters AS (
-            -- Get cluster assignment for each entity
+            -- Get cluster assignment for each entity (filtered by whitelisted datasets)
             SELECT DISTINCT
                 e.id AS entity_id,
                 eg.group_cluster_id AS cluster_id,
@@ -34,6 +42,7 @@ pub async fn fetch_organization_export_data(
                 "{0}"."{3}" eg ON (eg.entity_id_1 = e.id OR eg.entity_id_2 = e.id)
             LEFT JOIN
                 "{0}"."{1}" egc ON egc.id = eg.group_cluster_id
+            WHERE {4}
         ),
         ClusterStatuses AS (
             -- Determine the status of each cluster based on edge visualization records
@@ -69,17 +78,25 @@ pub async fn fetch_organization_export_data(
             public.entity e
         LEFT JOIN
             ClusterStatuses cs ON e.id = cs.entity_id
+        WHERE {4}
         ORDER BY
             CASE WHEN cs.cluster_id IS NULL THEN 1 ELSE 0 END, -- NULL clusters last
             cs.cluster_id, 
             e.name
         "#,
-        EXPORT_SCHEMA, cluster_table, edge_viz_table, group_table
+        EXPORT_SCHEMA, cluster_table, edge_viz_table, group_table, dataset_filter
     );
 
     debug!("Fetching organization data with query: {}", query);
-    let rows = client.query(&query, &[]).await
-        .context("Failed to fetch organization export data")?;
+    
+    // Convert filter_params to Vec<&(dyn ToSql + Sync)>
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = filter_params
+        .iter()
+        .map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+
+    let rows = client.query(&query, &params).await
+        .context("Failed to fetch organization export data with dataset filtering")?;
 
     let mut data = Vec::new();
     for row in rows {
@@ -94,17 +111,19 @@ pub async fn fetch_organization_export_data(
         });
     }
     
-    info!("Fetched {} organization records for export.", data.len());
+    info!("Fetched {} organization records for export (filtered by whitelisted datasets).", data.len());
     Ok(data)
 }
 
 /// Fetches data for the service-level export.
+/// Now filters by team's whitelisted datasets
 pub async fn fetch_service_export_data(
     pool: &PgPool,
     user_prefix: &str,
     timestamp_suffix: &str,
+    team_info: &TeamInfo,
 ) -> Result<Vec<ServiceExportRow>> {
-    info!("Fetching service export data for user '{}'...", user_prefix);
+    info!("Fetching service export data for user '{}' filtered by whitelisted datasets...", user_prefix);
     let client = pool.get().await.context("Failed to get DB client for service data fetch")?;
 
     let cluster_table = format!("{}_service_group_cluster_export_{}", user_prefix, timestamp_suffix);
@@ -114,11 +133,16 @@ pub async fn fetch_service_export_data(
     // The service edge visualization table uses 'service_group_cluster_id'
     let service_cluster_id_column_name = "service_group_cluster_id";
 
-    // Query that properly handles user opinion-based service clusters with taxonomy data
+    // Create dataset filter clause for services
+    let (dataset_filter, filter_params) = create_dataset_filter_clause(
+        "s", "source_system", &team_info.whitelisted_datasets, 1
+    );
+
+    // Query that properly handles user opinion-based service clusters with taxonomy data and dataset filtering
     let query = format!(
         r#"
         WITH ServiceClusters AS (
-            -- Get cluster assignment for each service
+            -- Get cluster assignment for each service (filtered by whitelisted datasets)
             SELECT DISTINCT
                 s.id AS service_id,
                 sg.group_cluster_id AS cluster_id,
@@ -129,6 +153,7 @@ pub async fn fetch_service_export_data(
                 "{0}"."{3}" sg ON (sg.service_id_1 = s.id OR sg.service_id_2 = s.id)
             LEFT JOIN
                 "{0}"."{1}" sgc ON sgc.id = sg.group_cluster_id
+            WHERE {5}
         ),
         ClusterStatuses AS (
             -- Determine the status of each service cluster based on edge visualization records
@@ -197,18 +222,26 @@ pub async fn fetch_service_export_data(
             public.service_taxonomy st ON s.id = st.service_id
         LEFT JOIN 
             public.taxonomy_term t ON st.taxonomy_term_id = t.id
+        WHERE {5}
         ORDER BY
             CASE WHEN cs.cluster_id IS NULL THEN 1 ELSE 0 END, -- NULL clusters last
             cs.cluster_id, 
             s.name,
             t.term
         "#,
-        EXPORT_SCHEMA, cluster_table, edge_viz_table, group_table, service_cluster_id_column_name
+        EXPORT_SCHEMA, cluster_table, edge_viz_table, group_table, service_cluster_id_column_name, dataset_filter
     );
 
     debug!("Fetching service data with query: {}", query);
-    let rows = client.query(&query, &[]).await
-        .context("Failed to fetch service export data")?;
+    
+    // Convert filter_params to Vec<&(dyn ToSql + Sync)>
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = filter_params
+        .iter()
+        .map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+
+    let rows = client.query(&query, &params).await
+        .context("Failed to fetch service export data with dataset filtering")?;
 
     // Group rows by service_id to handle multiple taxonomy terms per service
     let mut service_map: HashMap<String, Vec<tokio_postgres::Row>> = HashMap::new();
@@ -218,7 +251,7 @@ pub async fn fetch_service_export_data(
         service_map.entry(service_id).or_insert_with(Vec::new).push(row);
     }
 
-    debug!("Grouped {} services with taxonomy data", service_map.len());
+    debug!("Grouped {} services with taxonomy data (filtered by whitelisted datasets)", service_map.len());
 
     let mut data = Vec::new();
     for (_service_id, service_rows) in service_map {
@@ -272,6 +305,6 @@ pub async fn fetch_service_export_data(
         }
     });
     
-    info!("Fetched {} service records for export.", data.len());
+    info!("Fetched {} service records for export (filtered by whitelisted datasets).", data.len());
     Ok(data)
 }

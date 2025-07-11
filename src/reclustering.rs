@@ -10,6 +10,7 @@ use tokio_postgres::types::ToSql;
 
 use crate::db_connect::PgPool;
 use crate::models::{RawEdgeVisualization, EntityEdgeDetails};
+use crate::team_utils::{TeamInfo, create_dataset_filter_clause};
 
 const TEAM_SCHEMA: &str = "wa211_to_wric";
 const EXPORT_SCHEMA: &str = "wa211_to_wric_exports";
@@ -17,13 +18,15 @@ const EXPORT_SCHEMA: &str = "wa211_to_wric_exports";
 /// Runs the re-clustering logic for either entities or services based on user opinions.
 /// This starts with the user's reviewed edges and creates new clusters by filtering out
 /// CONFIRMED_NON_MATCH edges and keeping CONFIRMED_MATCH and PENDING_REVIEW edges.
+/// Now includes filtering by team's whitelisted datasets.
 pub async fn run_reclustering(
     pool: &PgPool,
     user_prefix: &str,
     timestamp_suffix: &str,
     entity_or_service: &str, // "entity" or "service"
+    team_info: &TeamInfo,
 ) -> Result<()> {
-    info!("Starting re-clustering for {} for user '{}'...", entity_or_service, user_prefix);
+    info!("Starting re-clustering for {} for user '{}' with dataset filtering...", entity_or_service, user_prefix);
 
     let edge_table_name = format!("{}_{}_edge_visualization", user_prefix, entity_or_service);
     let export_edge_table = format!("{}_{}_edge_visualization_export_{}", user_prefix, entity_or_service, timestamp_suffix);
@@ -133,14 +136,27 @@ pub async fn run_reclustering(
     info!("Built graph with {} nodes and {} valid edges after applying user opinions.", 
           graph.node_count(), graph.edge_count());
 
-    // 3. Get all original entities/services to ensure everything is included
+    // 3. Get all original entities/services to ensure everything is included, filtered by whitelisted datasets
     let all_original_ids_table = if entity_or_service == "entity" { "entity" } else { "service" };
-    let all_original_ids_query = format!(
-        r#"SELECT id FROM public.{}"#,
-        all_original_ids_table
+    let (dataset_filter, filter_params) = create_dataset_filter_clause(
+        "t", "source_system", &team_info.whitelisted_datasets, 1
     );
-    let original_rows = client.query(&all_original_ids_query, &[]).await
-        .context(format!("Failed to fetch all public {} IDs", entity_or_service))?;
+    
+    let all_original_ids_query = format!(
+        r#"SELECT id FROM public.{} t WHERE {}"#,
+        all_original_ids_table, dataset_filter
+    );
+    
+    // Convert filter_params to Vec<&(dyn ToSql + Sync)>
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = filter_params
+        .iter()
+        .map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+    
+    let original_rows = client.query(&all_original_ids_query, &params).await
+        .context(format!("Failed to fetch all public {} IDs filtered by whitelisted datasets", entity_or_service))?;
+
+    info!("Found {} original {}s in whitelisted datasets", original_rows.len(), entity_or_service);
 
     // 4. Identify connected components (new clusters) and handle isolated nodes
     let mut visited = HashSet::new();
@@ -174,7 +190,7 @@ pub async fn run_reclustering(
         }
     }
 
-    // Handle isolated nodes (entities/services not in any valid edge)
+    // Handle isolated nodes (entities/services not in any valid edge, but in whitelisted datasets)
     for row in original_rows {
         let original_id: String = row.get("id");
         if !node_map.contains_key(&original_id) {
@@ -187,7 +203,7 @@ pub async fn run_reclustering(
         }
     }
 
-    info!("Created {} clusters from user opinions.", clusters.len());
+    info!("Created {} clusters from user opinions (filtered by whitelisted datasets).", clusters.len());
 
     // 5. Store re-clustered data in timestamped export tables
     let tx = client.transaction().await.context("Failed to start transaction for storing re-clustered data")?;
@@ -213,7 +229,7 @@ pub async fn run_reclustering(
 
     for (cluster_id, member_ids) in &clusters {
         let cluster_name = format!("{}Cluster-{}", entity_or_service.to_uppercase(), &cluster_id[..8]);
-        let description = format!("Re-clustered {} of {} {}s based on user opinions.", entity_or_service, member_ids.len(), entity_or_service);
+        let description = format!("Re-clustered {} of {} {}s based on user opinions (whitelisted datasets only).", entity_or_service, member_ids.len(), entity_or_service);
         let entity_count = member_ids.len() as i32;
         let group_count = 0; // Will be updated when creating group records
         let average_coherence_score = 0.8; // Placeholder - could calculate based on edge weights
@@ -382,7 +398,7 @@ pub async fn run_reclustering(
 
     tx.commit().await.context("Failed to commit re-clustering transaction")?;
 
-    info!("Re-clustering for {} for user '{}' completed successfully. Created {} clusters.", 
+    info!("Re-clustering for {} for user '{}' completed successfully. Created {} clusters (filtered by whitelisted datasets).", 
           entity_or_service, user_prefix, clusters.len());
     Ok(())
 }
