@@ -1,21 +1,21 @@
-# Edge Review Dashboard & Export System
+# Export System for Edge Review Data
 
-This system provides tools for tracking human review progress on entity and service edge visualizations, and exporting the reviewed data to Excel files with **opinion-based reclustering**.
+This system exports human-reviewed entity and service edge visualization data to Excel files with embedded progress tracking.
 
 ## Features
 
 ### 📋 Data Export
 - **Excel export** with separate sheets for Organizations and Services
-- **Progress Overview tab** with dashboard data embedded in Excel workbooks
+- **Progress Overview tab** with comprehensive dashboard data embedded in Excel workbooks
 - **User opinion-based clustering** that respects human review decisions
 - **Parallel processing** for multiple users
 - **Timestamped exports** for audit trails
 
-### 🔄 Intelligent Reclustering
-- **Human-in-the-loop clustering** that incorporates reviewer decisions
-- **Graph-based connected components** algorithm for cluster formation
-- **Isolated entity handling** for entities with no valid connections
-- **Edge filtering** based on confirmed match/non-match status
+### 📊 Progress Tracking
+- **Real-time progress statistics** for edge visualization reviews
+- **Per-user breakdown** showing pending vs. completed reviews
+- **Visual completion percentages** and review counts
+- **Overall progress summary** across all users and record types
 
 ## Getting Started
 
@@ -29,9 +29,9 @@ This system provides tools for tracking human review progress on entity and serv
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd edge-review-exporter
+cd export-opinion
 
-# Build the applications
+# Build the application
 cargo build --release
 ```
 
@@ -50,7 +50,7 @@ RUST_LOG=info
 
 ## Usage
 
-### 1. Full Export Process (includes Dashboard)
+### Run Export Process
 
 To run the complete export process:
 
@@ -59,91 +59,11 @@ cargo run --bin export
 ```
 
 This will:
-1. 🎯 Generate initial dashboard
-2. 🔄 Run re-clustering based on user opinions  
-3. 📊 Export data to Excel files for each user
-4. 🎯 Regenerate dashboard with updated data
+1. 🔄 Run re-clustering based on user opinions  
+2. 📊 Export data to Excel files for each user
+3. 📈 Include Progress Overview tab with dashboard data
 
-## 🧠 Reclustering Logic Deep Dive
-
-The reclustering system is the core innovation of this tool. It takes machine-generated entity/service similarity predictions and refines them based on human reviewer decisions.
-
-### Why Reclustering?
-
-**Problem**: Initial clustering algorithms are probabilistic and make mistakes. Humans review edge connections and mark them as valid duplicates (`CONFIRMED_MATCH`) or false positives (`CONFIRMED_NON_MATCH`).
-
-**Solution**: Use human feedback to rebuild clusters that respect reviewer decisions, ensuring the final export reflects human intelligence rather than just algorithmic predictions.
-
-### Reclustering Algorithm
-
-#### Step 1: Edge Opinion Collection
-```
-Input: User's edge visualization table with confirmed_status values
-- PENDING_REVIEW: Awaiting human review
-- CONFIRMED_MATCH: Human confirmed these are duplicates  
-- CONFIRMED_NON_MATCH: Human confirmed these are NOT duplicates
-```
-
-#### Step 2: Edge Filtering
-The algorithm respects human decisions by:
-- **Keeping** edges marked as `CONFIRMED_MATCH` (human says "yes, these are duplicates")
-- **Keeping** edges marked as `PENDING_REVIEW` (neutral, algorithm prediction stands)
-- **Removing** edges marked as `CONFIRMED_NON_MATCH` (human says "no, these are different entities")
-
-```rust
-// Pseudo-code logic
-if status == "CONFIRMED_NON_MATCH" {
-    // Break this connection - don't include in clustering graph
-    skip_edge();
-} else {
-    // Keep this connection for clustering
-    add_to_graph(entity1, entity2, edge_weight);
-}
-```
-
-#### Step 3: Graph Construction
-- Build an undirected graph where:
-  - **Nodes** = entities/services
-  - **Edges** = valid connections (CONFIRMED_MATCH or PENDING_REVIEW)
-  - **Weights** = original confidence scores from ML algorithms
-
-#### Step 4: Connected Components Analysis
-Uses depth-first search to find connected components:
-```
-For each unvisited node:
-    Start new cluster
-    DFS traverse all connected nodes
-    Add all connected nodes to same cluster
-```
-
-#### Step 5: Isolated Entity Handling
-Entities with no valid edges get their own singleton clusters:
-- **Why**: An entity might have had edges that were all marked `CONFIRMED_NON_MATCH`
-- **Result**: These become "unique" entities in the final export
-
-#### Step 6: Export Table Generation
-Creates new timestamped tables with reclustered data:
-- `{user}_entity_group_cluster_export_{timestamp}`: Cluster definitions
-- `{user}_entity_group_export_{timestamp}`: Pairwise group relationships  
-- `{user}_entity_edge_visualization_export_{timestamp}`: Valid edges only
-
-### Reclustering Example
-
-**Before Reclustering:**
-```
-Original Cluster A: [Entity1, Entity2, Entity3]
-├─ Edge1-2: CONFIRMED_MATCH ✓
-├─ Edge1-3: CONFIRMED_NON_MATCH ✗ 
-└─ Edge2-3: PENDING_REVIEW ○
-```
-
-**After Reclustering:**
-```
-New Cluster A: [Entity1, Entity2] (connected via confirmed match)
-New Cluster B: [Entity3] (isolated due to non-match with Entity1)
-```
-
-The human decision to mark Edge1-3 as non-match broke Entity3 away from the cluster.
+Each user gets a timestamped Excel file: `{user_prefix}_export_{timestamp}.xlsx`
 
 ## Understanding the Data
 
@@ -153,40 +73,57 @@ The system tracks human reviews in tables like:
 - `{user_prefix}_service_edge_visualization`
 
 ### Review Statuses
-- **`PENDING_REVIEW`**: Requires human review (treated as valid connection)
-- **`CONFIRMED_MATCH`**: Human confirmed these are duplicates (strong valid connection)
-- **`CONFIRMED_NON_MATCH`**: Human confirmed these are NOT duplicates (connection broken)
+- **`PENDING_REVIEW`**: Requires human review
+- **`CONFIRMED_MATCH`**: Human confirmed these are duplicates
+- **`CONFIRMED_NON_MATCH`**: Human confirmed these are NOT duplicates
 
 ### Cluster Status Logic
 The final `cluster_confirmed_status` in exports follows this priority:
 1. **PENDING_REVIEW**: Any edge in cluster is pending → entire cluster pending
-2. **CONFIRMED**: All edges confirmed OR multi-entity cluster with no edges  
+2. **CONFIRMED**: All edges confirmed OR multi-entity cluster with no edges
 3. **NO_MATCH**: Single entity with no edges or no cluster assigned
 
-### Export Data Fields
+## Excel File Structure
 
-#### Organizations Sheet
-- `cluster_confirmed_status`: Status of the entire cluster this entity belongs to
-- `cluster`: UUID of the reclustered group
-- `has_duplicates`: Boolean indicating if cluster contains multiple entities
+Each export contains three sheets:
 
-#### Services Sheet  
-- `cluster_confirmed_status`: Status of the entire cluster this service belongs to
-- `cluster`: UUID of the reclustered group
-- `has_duplicates`: Boolean indicating if cluster contains multiple services
-- `taxonomy_terms`: Comma-separated taxonomy classifications
+### 1. Progress Overview Sheet
+- **Overall Progress Summary**:
+  - Total pending and reviewed counts across entity and service records
+  - Overall completion percentage
+  - Cross-user statistics
+- **User Breakdown**:
+  - Per-user statistics for both entity and service reviews
+  - Individual completion percentages
+  - Detailed pending/confirmed/non-match counts
+- **Timestamp**: When the export was generated
 
-## File Outputs
+### 2. Organizations Sheet
+Entity-level data including:
+- Contributor information
+- Entity IDs and names
+- Cluster assignments and confirmation status
+- Duplicate detection flags
 
-### Excel Exports  
-- `{user_prefix}_export_{timestamp}.xlsx` files
-- **Progress Overview sheet**: 
-  - Overall progress summary across all users
-  - User-by-user breakdown of entity and service review stats
-  - Completion percentages and pending review counts
-  - Timestamp of export generation
-- **Organizations sheet**: Entity-level data with cluster assignments
-- **Services sheet**: Service-level data with taxonomy terms and addresses
+### 3. Services Sheet  
+Service-level data including:
+- Service and organization details
+- Location and address information
+- Taxonomy term classifications
+- Cluster assignments and confirmation status
+- Duplicate detection flags
+
+## Progress Tracking Details
+
+### Review Status Tracking
+- **Pending Review**: Edges awaiting human review (`PENDING_REVIEW`)
+- **Confirmed Match**: Edges marked as true duplicates (`CONFIRMED_MATCH`) 
+- **Confirmed Non-Match**: Edges marked as not duplicates (`CONFIRMED_NON_MATCH`)
+
+### Completion Metrics
+- **Review Percentage**: (Confirmed Match + Confirmed Non-Match) / Total Records
+- **Total Records**: All edges requiring review
+- **Reviewed Count**: Edges with human decisions (excluding pending)
 
 ## Development
 
@@ -201,32 +138,25 @@ let users = vec![
 ];
 ```
 
-### Database Schema Requirements
+### Database Schema
 The system expects these table patterns:
 - `{schema}.{user_prefix}_entity_edge_visualization`
 - `{schema}.{user_prefix}_service_edge_visualization`
 
-With required columns:
-- `confirmed_status` (VARCHAR): PENDING_REVIEW, CONFIRMED_MATCH, CONFIRMED_NON_MATCH
-- `was_reviewed` (BOOLEAN): Tracking flag
-- `{entity_or_service}_id_1` (VARCHAR): First entity/service ID
-- `{entity_or_service}_id_2` (VARCHAR): Second entity/service ID  
-- `details` (JSONB): Edge metadata and confidence scores
-- `edge_weight` (FLOAT): ML algorithm confidence
+With columns:
+- `confirmed_status` (VARCHAR)
+- `was_reviewed` (BOOLEAN)
+- Entity/service ID columns
 
-### Extending Reclustering Logic
-
-To modify clustering behavior, edit `reclustering.rs`:
-
-```rust
-// Change edge filtering criteria
-let is_valid_connection = match status {
-    "CONFIRMED_MATCH" => true,
-    "PENDING_REVIEW" => true,  // Could change this to false for stricter clustering
-    "CONFIRMED_NON_MATCH" => false,
-    _ => false, // Handle new status types
-};
-```
+### Re-clustering Logic
+The system:
+1. **Fetches user opinions** from edge visualization tables
+2. **Filters edges** based on review status:
+   - Keeps: `CONFIRMED_MATCH` and `PENDING_REVIEW` edges
+   - Removes: `CONFIRMED_NON_MATCH` edges (breaks connections)
+3. **Creates new clusters** using connected components
+4. **Handles isolated entities** with self-referencing cluster records
+5. **Exports timestamped tables** with user-opinion-based clustering
 
 ## Monitoring & Troubleshooting
 
@@ -236,6 +166,34 @@ Enable detailed logging:
 RUST_LOG=debug cargo run --bin export
 ```
 
+### Common Issues
+
+**Empty Progress Overview**: Check database connection and table names
+**Zero review counts**: Verify `confirmed_status` column has expected values  
+**Export fails**: Check database permissions and disk space for Excel files
+**Missing users**: Verify user prefixes match database table naming
+
+### Performance
+- Export process scales with data size (parallel user processing)
+- Progress Overview generation typically takes < 5 seconds
+- Re-clustering performance depends on edge count and cluster size
+- Excel file generation is optimized for large datasets
+
+## File Outputs
+
+### Excel Exports  
+- `{user_prefix}_export_{timestamp}.xlsx` files per user
+- **Progress Overview sheet**: Comprehensive review statistics and completion tracking
+- **Organizations sheet**: Entity-level data with cluster assignments
+- **Services sheet**: Service-level data with taxonomy terms and addresses
+
+### Timestamped Tables
+The system creates export schema tables with timestamps:
+- `{user_prefix}_entity_group_cluster_export_{timestamp}`
+- `{user_prefix}_service_group_cluster_export_{timestamp}` 
+- `{user_prefix}_entity_edge_visualization_export_{timestamp}`
+- `{user_prefix}_service_edge_visualization_export_{timestamp}`
+
 ## License
 
-GPL License with specifics pending
+[Add your license information here]

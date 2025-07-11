@@ -6,12 +6,7 @@ edition = "2021"
 # Main export application
 [[bin]]
 name = "export"
-path = "main.rs"
-
-# Standalone dashboard application
-[[bin]]
-name = "dashboard"
-path = "dashboard_main.rs"
+path = "./src/main.rs"
 
 [dependencies]
 # Existing dependencies (keeping as-is)

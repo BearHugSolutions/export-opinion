@@ -24,16 +24,6 @@ async fn main() -> Result<()> {
     let pool = db_connect::connect().await?;
     info!("Database connection pool established.");
 
-    // Generate dashboard first (before any schema changes)
-    let dashboard_path = PathBuf::from("review_dashboard.html");
-    info!("Generating review dashboard...");
-    match dashboard::generate_dashboard(&pool, &dashboard_path).await {
-        Ok(()) => info!("Dashboard generated successfully at: {:?}", dashboard_path),
-        Err(e) => {
-            log::warn!("Failed to generate dashboard: {}. Continuing with exports...", e);
-        }
-    }
-
     // Create the export schema once before processing users
     let schema_client = pool.get().await?;
     export_schema::create_export_schema(&schema_client).await?;
@@ -121,13 +111,6 @@ async fn main() -> Result<()> {
                 eprintln!("Join error in user export task: {:?}", e);
             }
         }
-    }
-
-    // Generate dashboard again after exports complete (to reflect any changes)
-    info!("Regenerating dashboard after exports...");
-    match dashboard::generate_dashboard(&pool, &dashboard_path).await {
-        Ok(()) => info!("Final dashboard generated successfully at: {:?}", dashboard_path),
-        Err(e) => log::warn!("Failed to regenerate final dashboard: {}", e),
     }
 
     info!("All exports completed.");
