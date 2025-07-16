@@ -116,34 +116,32 @@ fn write_service_sheet(sheet: &mut Worksheet, data: Vec<ServiceExportRow>) -> Re
 }
 
 /// Helper function to write dashboard data to the "Progress Overview" sheet.
+/// Updated to handle single user with opinion information.
 fn write_progress_overview_sheet(sheet: &mut Worksheet, data: Vec<UserDashboard>) -> Result<()> {
     sheet.set_name("Progress Overview")?;
 
     // Set column widths for better readability
     sheet.set_column_width(0, 20)?; // User/Metric column
     sheet.set_column_width(1, 15)?; // User Prefix column  
-    sheet.set_column_width(2, 15)?; // Record Type column
-    sheet.set_column_width(3, 15)?; // Pending Review column
-    sheet.set_column_width(4, 15)?; // Confirmed Match column
-    sheet.set_column_width(5, 18)?; // Confirmed Non-Match column
-    sheet.set_column_width(6, 15)?; // Total Records column
-    sheet.set_column_width(7, 15)?; // Reviewed Count column
-    sheet.set_column_width(8, 15)?; // Completion % column
+    sheet.set_column_width(2, 15)?; // Opinion Name column
+    sheet.set_column_width(3, 15)?; // Record Type column
+    sheet.set_column_width(4, 15)?; // Pending Review column
+    sheet.set_column_width(5, 15)?; // Confirmed Match column
+    sheet.set_column_width(6, 18)?; // Confirmed Non-Match column
+    sheet.set_column_width(7, 15)?; // Total Records column
+    sheet.set_column_width(8, 15)?; // Reviewed Count column
+    sheet.set_column_width(9, 15)?; // Completion % column
 
     let mut current_row = 0u32;
 
-    // Calculate overall statistics
-    let mut total_entity_pending = 0i64;
-    let mut total_entity_reviewed = 0i64;
-    let mut total_service_pending = 0i64;
-    let mut total_service_reviewed = 0i64;
+    // Since we're now processing a single user with a single opinion, 
+    // the dashboard data should contain only one user
+    let user = data.first().ok_or_else(|| anyhow::anyhow!("No dashboard data provided"))?;
 
-    for user in &data {
-        total_entity_pending += user.entity_stats.pending_review;
-        total_entity_reviewed += user.entity_stats.reviewed_count;
-        total_service_pending += user.service_stats.pending_review;
-        total_service_reviewed += user.service_stats.reviewed_count;
-    }
+    let total_entity_pending = user.entity_stats.pending_review;
+    let total_entity_reviewed = user.entity_stats.reviewed_count;
+    let total_service_pending = user.service_stats.pending_review;
+    let total_service_reviewed = user.service_stats.reviewed_count;
 
     let total_pending = total_entity_pending + total_service_pending;
     let total_reviewed = total_entity_reviewed + total_service_reviewed;
@@ -157,11 +155,26 @@ fn write_progress_overview_sheet(sheet: &mut Worksheet, data: Vec<UserDashboard>
     // Create format for percentages
     let percentage_format = Format::new().set_num_format("0.0");
 
-    // Write overall summary section
-    sheet.write_string(current_row, 0, "OVERALL PROGRESS SUMMARY")?;
+    // Write export summary section
+    sheet.write_string(current_row, 0, "EXPORT SUMMARY")?;
     current_row += 1;
     sheet.write_string(current_row, 0, "")?; // Empty row for spacing
     current_row += 1;
+
+    // Export details
+    sheet.write_string(current_row, 0, "User")?;
+    sheet.write_string(current_row, 1, &user.username)?;
+    current_row += 1;
+
+    sheet.write_string(current_row, 0, "User Prefix")?;
+    sheet.write_string(current_row, 1, &user.user_prefix)?;
+    current_row += 1;
+
+    sheet.write_string(current_row, 0, "Opinion Name")?;
+    sheet.write_string(current_row, 1, &user.opinion_name)?;
+    current_row += 1;
+
+    current_row += 1; // Add spacing
 
     // Overall stats headers
     let summary_headers = vec![
@@ -194,59 +207,53 @@ fn write_progress_overview_sheet(sheet: &mut Worksheet, data: Vec<UserDashboard>
     sheet.write_number_with_format(current_row, 3, overall_percentage, &percentage_format)?;
     current_row += 2; // Extra spacing
 
-    // Write detailed user breakdown section
-    sheet.write_string(current_row, 0, "USER BREAKDOWN")?;
+    // Write detailed breakdown section
+    sheet.write_string(current_row, 0, "DETAILED BREAKDOWN")?;
     current_row += 1;
     sheet.write_string(current_row, 0, "")?; // Empty row for spacing
     current_row += 1;
 
-    // User breakdown headers
-    let user_headers = vec![
-        "User", "User Prefix", "Record Type", "Pending Review", "Confirmed Match", 
+    // Detailed breakdown headers
+    let detail_headers = vec![
+        "User", "User Prefix", "Opinion Name", "Record Type", "Pending Review", "Confirmed Match", 
         "Confirmed Non-Match", "Total Records", "Reviewed Count", "Completion %"
     ];
-    for (col_num, header) in user_headers.iter().enumerate() {
+    for (col_num, header) in detail_headers.iter().enumerate() {
         sheet.write_string(current_row, col_num as u16, *header)?;
     }
     current_row += 1;
 
-    // User breakdown data
-    for user in &data {
-        // Entity row
-        sheet.write_string(current_row, 0, &user.username)?;
-        sheet.write_string(current_row, 1, &user.user_prefix)?;
-        sheet.write_string(current_row, 2, "Entity")?;
-        sheet.write_number(current_row, 3, user.entity_stats.pending_review as f64)?;
-        sheet.write_number(current_row, 4, user.entity_stats.confirmed_match as f64)?;
-        sheet.write_number(current_row, 5, user.entity_stats.confirmed_non_match as f64)?;
-        sheet.write_number(current_row, 6, user.entity_stats.total as f64)?;
-        sheet.write_number(current_row, 7, user.entity_stats.reviewed_count as f64)?;
-        sheet.write_number_with_format(current_row, 8, user.entity_stats.review_percentage, &percentage_format)?;
-        current_row += 1;
+    // Entity row
+    sheet.write_string(current_row, 0, &user.username)?;
+    sheet.write_string(current_row, 1, &user.user_prefix)?;
+    sheet.write_string(current_row, 2, &user.opinion_name)?;
+    sheet.write_string(current_row, 3, "Entity")?;
+    sheet.write_number(current_row, 4, user.entity_stats.pending_review as f64)?;
+    sheet.write_number(current_row, 5, user.entity_stats.confirmed_match as f64)?;
+    sheet.write_number(current_row, 6, user.entity_stats.confirmed_non_match as f64)?;
+    sheet.write_number(current_row, 7, user.entity_stats.total as f64)?;
+    sheet.write_number(current_row, 8, user.entity_stats.reviewed_count as f64)?;
+    sheet.write_number_with_format(current_row, 9, user.entity_stats.review_percentage, &percentage_format)?;
+    current_row += 1;
 
-        // Service row
-        sheet.write_string(current_row, 0, &user.username)?;
-        sheet.write_string(current_row, 1, &user.user_prefix)?;
-        sheet.write_string(current_row, 2, "Service")?;
-        sheet.write_number(current_row, 3, user.service_stats.pending_review as f64)?;
-        sheet.write_number(current_row, 4, user.service_stats.confirmed_match as f64)?;
-        sheet.write_number(current_row, 5, user.service_stats.confirmed_non_match as f64)?;
-        sheet.write_number(current_row, 6, user.service_stats.total as f64)?;
-        sheet.write_number(current_row, 7, user.service_stats.reviewed_count as f64)?;
-        sheet.write_number_with_format(current_row, 8, user.service_stats.review_percentage, &percentage_format)?;
-        current_row += 1;
-
-        // Add a blank row between users for readability
-        sheet.write_string(current_row, 0, "")?;
-        current_row += 1;
-    }
+    // Service row
+    sheet.write_string(current_row, 0, &user.username)?;
+    sheet.write_string(current_row, 1, &user.user_prefix)?;
+    sheet.write_string(current_row, 2, &user.opinion_name)?;
+    sheet.write_string(current_row, 3, "Service")?;
+    sheet.write_number(current_row, 4, user.service_stats.pending_review as f64)?;
+    sheet.write_number(current_row, 5, user.service_stats.confirmed_match as f64)?;
+    sheet.write_number(current_row, 6, user.service_stats.confirmed_non_match as f64)?;
+    sheet.write_number(current_row, 7, user.service_stats.total as f64)?;
+    sheet.write_number(current_row, 8, user.service_stats.reviewed_count as f64)?;
+    sheet.write_number_with_format(current_row, 9, user.service_stats.review_percentage, &percentage_format)?;
+    current_row += 2;
 
     // Add timestamp
-    current_row += 1;
     sheet.write_string(current_row, 0, "Generated")?;
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     sheet.write_string(current_row, 1, &timestamp)?;
 
-    info!("'Progress Overview' sheet written with data for {} users.", data.len());
+    info!("'Progress Overview' sheet written for user: {} with opinion: {}", user.username, user.opinion_name);
     Ok(())
 }

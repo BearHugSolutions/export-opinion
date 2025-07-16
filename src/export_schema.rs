@@ -15,15 +15,17 @@ pub async fn create_export_schema(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Creates and populates the timestamped export tables for a given user.
-/// These tables are based on the user's opinionated tables in the team schema.
+/// Creates and populates the timestamped export tables for a given user and opinion.
+/// These tables are based on the user's opinion-specific tables in the team schema.
 /// Also removes check constraints that would prevent our reclustering logic from working.
 pub async fn create_timestamped_tables(
     client: &Client,
     user_prefix: &str,
+    opinion_name: &str,
     timestamp_suffix: &str,
 ) -> Result<()> {
-    info!("Creating timestamped tables for user '{}' with suffix '{}'...", user_prefix, timestamp_suffix);
+    info!("Creating timestamped tables for user '{}' with opinion '{}' and suffix '{}'...", 
+          user_prefix, opinion_name, timestamp_suffix);
 
     let tables_to_copy = vec![
         "entity_group",
@@ -35,8 +37,9 @@ pub async fn create_timestamped_tables(
     ];
 
     for table_name in tables_to_copy {
-        let source_table_full = format!(r#""{}"."{}_{}""#, TEAM_SCHEMA, user_prefix, table_name);
-        let target_table_name = format!("{}_{}_export_{}", user_prefix, table_name, timestamp_suffix);
+        // Updated table naming to include opinion: {user_prefix}_{opinion_name}_{table_suffix}
+        let source_table_full = format!(r#""{}"."{}_{}_{}" "#, TEAM_SCHEMA, user_prefix, opinion_name, table_name);
+        let target_table_name = format!("{}_{}_{}_export_{}", user_prefix, opinion_name, table_name, timestamp_suffix);
         let target_table_full = format!(r#""{}"."{}""#, EXPORT_SCHEMA, target_table_name);
 
         // Drop existing table in export schema to ensure a clean slate for this timestamp

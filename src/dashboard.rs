@@ -4,7 +4,7 @@ use tokio_postgres::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::db_connect::PgPool;
-use crate::team_utils::{TeamInfo, create_dataset_filter_clause};
+use crate::team_utils::{TeamInfo, UserInfo, OpinionInfo, create_dataset_filter_clause};
 
 const TEAM_SCHEMA: &str = "wa211_to_wric";
 
@@ -22,6 +22,7 @@ pub struct ReviewStats {
 pub struct UserDashboard {
     pub username: String,
     pub user_prefix: String,
+    pub opinion_name: String,
     pub entity_stats: ReviewStats,
     pub service_stats: ReviewStats,
 }
@@ -51,52 +52,56 @@ impl ReviewStats {
     }
 }
 
-/// Fetches dashboard data for all users - used for Excel export progress overview
-/// Now filters by team's whitelisted datasets
-pub async fn get_dashboard_data(pool: &PgPool, team_info: &TeamInfo) -> Result<Vec<UserDashboard>> {
-    info!("Fetching dashboard data for all users with dataset filtering...");
-
-    // Define users - in a real app, this might come from a config or database
-    let users = vec![
-        ("Hannah", "hannah"),
-        ("DrewW", "dreww"),
-    ];
+/// Fetches dashboard data for the selected user and opinion - used for Excel export progress overview
+/// Now filters by team's whitelisted datasets and uses opinion-based table naming
+pub async fn get_dashboard_data(
+    pool: &PgPool, 
+    user_info: &UserInfo,
+    opinion_info: &OpinionInfo,
+    team_info: &TeamInfo
+) -> Result<Vec<UserDashboard>> {
+    info!("Fetching dashboard data for user '{}' with opinion '{}' and dataset filtering...", 
+          user_info.username, opinion_info.name);
 
     let mut user_dashboards = Vec::new();
+    let client = pool.get().await.context("Failed to get DB client for dashboard")?;
+    
+    let user_prefix = user_info.user_opinion_prefix.as_deref()
+        .ok_or_else(|| anyhow::anyhow!("User has no opinion prefix set"))?;
+    
+    // Get entity review stats with dataset filtering and opinion-based table naming
+    let entity_stats = get_review_stats(&client, user_prefix, &opinion_info.name, "entity", &team_info.whitelisted_datasets).await
+        .with_context(|| format!("Failed to get entity stats for user {} with opinion {}", user_info.username, opinion_info.name))?;
+    
+    // Get service review stats with dataset filtering and opinion-based table naming
+    let service_stats = get_review_stats(&client, user_prefix, &opinion_info.name, "service", &team_info.whitelisted_datasets).await
+        .with_context(|| format!("Failed to get service stats for user {} with opinion {}", user_info.username, opinion_info.name))?;
 
-    for (username, user_prefix) in users {
-        let client = pool.get().await.context("Failed to get DB client for dashboard")?;
-        
-        // Get entity review stats with dataset filtering
-        let entity_stats = get_review_stats(&client, user_prefix, "entity", &team_info.whitelisted_datasets).await
-            .with_context(|| format!("Failed to get entity stats for user {}", username))?;
-        
-        // Get service review stats with dataset filtering
-        let service_stats = get_review_stats(&client, user_prefix, "service", &team_info.whitelisted_datasets).await
-            .with_context(|| format!("Failed to get service stats for user {}", username))?;
+    user_dashboards.push(UserDashboard {
+        username: user_info.username.clone(),
+        user_prefix: user_prefix.to_string(),
+        opinion_name: opinion_info.name.clone(),
+        entity_stats,
+        service_stats,
+    });
 
-        user_dashboards.push(UserDashboard {
-            username: username.to_string(),
-            user_prefix: user_prefix.to_string(),
-            entity_stats,
-            service_stats,
-        });
-
-        info!("Collected stats for user: {} (filtered by whitelisted datasets)", username);
-    }
+    info!("Collected stats for user: {} with opinion: {} (filtered by whitelisted datasets)", 
+          user_info.username, opinion_info.name);
 
     Ok(user_dashboards)
 }
 
-/// Fetches review statistics for a specific user and record type (entity or service)
-/// Now includes filtering by whitelisted datasets
+/// Fetches review statistics for a specific user, opinion, and record type (entity or service)
+/// Now includes opinion name in table naming and filtering by whitelisted datasets
 async fn get_review_stats(
     client: &Client,
     user_prefix: &str,
+    opinion_name: &str,
     record_type: &str, // "entity" or "service"
     whitelisted_datasets: &[String],
 ) -> Result<ReviewStats> {
-    let table_name = format!("{}_{}_edge_visualization", user_prefix, record_type);
+    // Updated table naming to include opinion: {user_prefix}_{opinion_name}_{table_suffix}
+    let table_name = format!("{}_{}_{}_edge_visualization", user_prefix, opinion_name, record_type);
     
     // Determine which ID columns and source table to use for filtering
     let (id_column_1, id_column_2, source_table, source_column) = match record_type {
@@ -131,7 +136,7 @@ async fn get_review_stats(
         .collect();
 
     let rows = client.query(&query, &params).await
-        .context(format!("Failed to query {} edge visualization stats with dataset filtering", record_type))?;
+        .context(format!("Failed to query {} edge visualization stats with dataset filtering and opinion '{}'", record_type, opinion_name))?;
 
     let mut pending_review = 0i64;
     let mut confirmed_match = 0i64;

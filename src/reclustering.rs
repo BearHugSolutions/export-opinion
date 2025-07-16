@@ -18,24 +18,27 @@ const EXPORT_SCHEMA: &str = "wa211_to_wric_exports";
 /// Runs the re-clustering logic for either entities or services based on user opinions.
 /// This starts with the user's reviewed edges and creates new clusters by filtering out
 /// CONFIRMED_NON_MATCH edges and keeping CONFIRMED_MATCH and PENDING_REVIEW edges.
-/// Now includes filtering by team's whitelisted datasets.
+/// Now includes filtering by team's whitelisted datasets and opinion-based table naming.
 pub async fn run_reclustering(
     pool: &PgPool,
     user_prefix: &str,
+    opinion_name: &str,
     timestamp_suffix: &str,
     entity_or_service: &str, // "entity" or "service"
     team_info: &TeamInfo,
 ) -> Result<()> {
-    info!("Starting re-clustering for {} for user '{}' with dataset filtering...", entity_or_service, user_prefix);
+    info!("Starting re-clustering for {} for user '{}' with opinion '{}' and dataset filtering...", 
+          entity_or_service, user_prefix, opinion_name);
 
-    let edge_table_name = format!("{}_{}_edge_visualization", user_prefix, entity_or_service);
-    let export_edge_table = format!("{}_{}_edge_visualization_export_{}", user_prefix, entity_or_service, timestamp_suffix);
-    let export_group_table = format!("{}_{}_group_export_{}", user_prefix, entity_or_service, timestamp_suffix);
-    let export_cluster_table = format!("{}_{}_group_cluster_export_{}", user_prefix, entity_or_service, timestamp_suffix);
+    // Updated table naming to include opinion: {user_prefix}_{opinion_name}_{table_suffix}
+    let edge_table_name = format!("{}_{}_{}_edge_visualization", user_prefix, opinion_name, entity_or_service);
+    let export_edge_table = format!("{}_{}_{}_edge_visualization_export_{}", user_prefix, opinion_name, entity_or_service, timestamp_suffix);
+    let export_group_table = format!("{}_{}_{}_group_export_{}", user_prefix, opinion_name, entity_or_service, timestamp_suffix);
+    let export_cluster_table = format!("{}_{}_{}_group_cluster_export_{}", user_prefix, opinion_name, entity_or_service, timestamp_suffix);
 
     let mut client = pool.get().await.context("Failed to get DB client for reclustering")?;
 
-    // 1. Fetch edge data from user's opinionated table
+    // 1. Fetch edge data from user's opinion-specific table
     let query = format!(
         r#"
         SELECT id, {0}_id_1, {0}_id_2, confirmed_status, details, edge_weight
@@ -45,7 +48,7 @@ pub async fn run_reclustering(
     );
     debug!("Fetching edges with query: {}", query);
     let rows = client.query(&query, &[]).await
-        .context(format!("Failed to fetch {} edge data for reclustering", entity_or_service))?;
+        .context(format!("Failed to fetch {} edge data for reclustering with opinion '{}'", entity_or_service, opinion_name))?;
 
     let mut all_edges: Vec<RawEdgeVisualization> = Vec::new();
     for row in rows {
@@ -59,7 +62,7 @@ pub async fn run_reclustering(
             details: row.get("details"),
         });
     }
-    info!("Fetched {} {} edges from user opinions.", all_edges.len(), entity_or_service);
+    info!("Fetched {} {} edges from user opinion '{}'.", all_edges.len(), entity_or_service, opinion_name);
 
     // 2. Filter edges based on user opinions - keep only valid connections
     let mut graph = UnGraph::<String, EntityEdgeDetails>::new_undirected();
@@ -133,8 +136,8 @@ pub async fn run_reclustering(
         }
     }
 
-    info!("Built graph with {} nodes and {} valid edges after applying user opinions.", 
-          graph.node_count(), graph.edge_count());
+    info!("Built graph with {} nodes and {} valid edges after applying user opinions for opinion '{}'.", 
+          graph.node_count(), graph.edge_count(), opinion_name);
 
     // 3. Get all original entities/services to ensure everything is included, filtered by whitelisted datasets
     let all_original_ids_table = if entity_or_service == "entity" { "entity" } else { "service" };
@@ -156,7 +159,7 @@ pub async fn run_reclustering(
     let original_rows = client.query(&all_original_ids_query, &params).await
         .context(format!("Failed to fetch all public {} IDs filtered by whitelisted datasets", entity_or_service))?;
 
-    info!("Found {} original {}s in whitelisted datasets", original_rows.len(), entity_or_service);
+    info!("Found {} original {}s in whitelisted datasets for opinion '{}'", original_rows.len(), entity_or_service, opinion_name);
 
     // 4. Identify connected components (new clusters) and handle isolated nodes
     let mut visited = HashSet::new();
@@ -203,7 +206,7 @@ pub async fn run_reclustering(
         }
     }
 
-    info!("Created {} clusters from user opinions (filtered by whitelisted datasets).", clusters.len());
+    info!("Created {} clusters from user opinion '{}' (filtered by whitelisted datasets).", clusters.len(), opinion_name);
 
     // 5. Store re-clustered data in timestamped export tables
     let tx = client.transaction().await.context("Failed to start transaction for storing re-clustered data")?;
@@ -229,7 +232,8 @@ pub async fn run_reclustering(
 
     for (cluster_id, member_ids) in &clusters {
         let cluster_name = format!("{}Cluster-{}", entity_or_service.to_uppercase(), &cluster_id[..8]);
-        let description = format!("Re-clustered {} of {} {}s based on user opinions (whitelisted datasets only).", entity_or_service, member_ids.len(), entity_or_service);
+        let description = format!("Re-clustered {} of {} {}s based on user opinion '{}' (whitelisted datasets only).", 
+                                entity_or_service, member_ids.len(), entity_or_service, opinion_name);
         let entity_count = member_ids.len() as i32;
         let group_count = 0; // Will be updated when creating group records
         let average_coherence_score = 0.8; // Placeholder - could calculate based on edge weights
@@ -270,7 +274,7 @@ pub async fn run_reclustering(
                 &was_reviewed_batch as &(dyn ToSql + Sync),
             ],
         ).await.context("Failed to batch insert cluster records")?;
-        info!("Inserted {} new {} clusters.", cluster_ids_batch.len(), entity_or_service);
+        info!("Inserted {} new {} clusters for opinion '{}'.", cluster_ids_batch.len(), entity_or_service, opinion_name);
     }
 
     // Create group records for all entities/services
@@ -290,7 +294,7 @@ pub async fn run_reclustering(
             group_id1s_batch.push(entity_id.clone());
             group_id2s_batch.push(entity_id.clone()); // Self-reference for isolated entities
             group_cluster_ids_batch.push(cluster_id.clone());
-            group_method_types_batch.push("USER_REVIEW_ISOLATED".to_string());
+            group_method_types_batch.push(format!("USER_OPINION_{}_ISOLATED", opinion_name.to_uppercase()));
         } else {
             // Multi-entity cluster - create pairwise group records
             for i in 0..member_vec.len() {
@@ -299,7 +303,7 @@ pub async fn run_reclustering(
                     group_id1s_batch.push(member_vec[i].clone());
                     group_id2s_batch.push(member_vec[j].clone());
                     group_cluster_ids_batch.push(cluster_id.clone());
-                    group_method_types_batch.push("USER_REVIEW_CONNECTED".to_string());
+                    group_method_types_batch.push(format!("USER_OPINION_{}_CONNECTED", opinion_name.to_uppercase()));
                 }
             }
         }
@@ -332,7 +336,7 @@ pub async fn run_reclustering(
                 &confirmed_status_batch as &(dyn ToSql + Sync),
             ],
         ).await.context("Failed to batch insert group records")?;
-        info!("Inserted {} group records.", group_ids_batch.len());
+        info!("Inserted {} group records for opinion '{}'.", group_ids_batch.len(), opinion_name);
     }
 
     // Insert visualization edges for valid connections
@@ -353,7 +357,7 @@ pub async fn run_reclustering(
     for (id1, id2, weight, details, status) in valid_edges_for_viz {
         let edge_id = Uuid::new_v4().to_string();
         let cluster_id = node_to_cluster_id.get(&id1).or_else(|| node_to_cluster_id.get(&id2))
-            .ok_or_else(|| anyhow::anyhow!("Edge nodes not found in any cluster after reclustering for edge {} - {}", id1, id2))?;
+            .ok_or_else(|| anyhow::anyhow!("Edge nodes not found in any cluster after reclustering for edge {} - {} (opinion: {})", id1, id2, opinion_name))?;
         
         edge_ids_batch.push(edge_id);
         edge_cluster_ids_batch.push(cluster_id.clone());
@@ -373,7 +377,7 @@ pub async fn run_reclustering(
             EXPORT_SCHEMA, export_edge_table, cluster_id_column_name, entity_or_service
         );
 
-        let pipeline_run_id_batch = vec!["user_export_pipeline".to_string(); edge_ids_batch.len()];
+        let pipeline_run_id_batch = vec![format!("user_export_pipeline_{}", opinion_name); edge_ids_batch.len()];
         let current_timestamp = Local::now().naive_utc();
         let created_at_batch = vec![current_timestamp; edge_ids_batch.len()];
         let was_reviewed_batch = vec![true; edge_ids_batch.len()];
@@ -393,12 +397,12 @@ pub async fn run_reclustering(
                 &was_reviewed_batch as &(dyn ToSql + Sync),
             ],
         ).await.context("Failed to batch insert edge visualization records")?;
-        info!("Inserted {} visualization edges into export table.", edge_ids_batch.len());
+        info!("Inserted {} visualization edges into export table for opinion '{}'.", edge_ids_batch.len(), opinion_name);
     }
 
     tx.commit().await.context("Failed to commit re-clustering transaction")?;
 
-    info!("Re-clustering for {} for user '{}' completed successfully. Created {} clusters (filtered by whitelisted datasets).", 
-          entity_or_service, user_prefix, clusters.len());
+    info!("Re-clustering for {} for user '{}' with opinion '{}' completed successfully. Created {} clusters (filtered by whitelisted datasets).", 
+          entity_or_service, user_prefix, opinion_name, clusters.len());
     Ok(())
 }

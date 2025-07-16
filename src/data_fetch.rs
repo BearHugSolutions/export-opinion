@@ -8,19 +8,22 @@ use crate::team_utils::{TeamInfo, create_dataset_filter_clause};
 const EXPORT_SCHEMA: &str = "wa211_to_wric_exports";
 
 /// Fetches data for the organization-level export.
-/// Now filters by team's whitelisted datasets
+/// Now filters by team's whitelisted datasets and uses opinion-based table naming
 pub async fn fetch_organization_export_data(
     pool: &PgPool,
     user_prefix: &str,
+    opinion_name: &str,
     timestamp_suffix: &str,
     team_info: &TeamInfo,
 ) -> Result<Vec<OrganizationExportRow>> {
-    info!("Fetching organization export data for user '{}' filtered by whitelisted datasets...", user_prefix);
+    info!("Fetching organization export data for user '{}' with opinion '{}' filtered by whitelisted datasets...", 
+          user_prefix, opinion_name);
     let client = pool.get().await.context("Failed to get DB client for organization data fetch")?;
 
-    let cluster_table = format!("{}_entity_group_cluster_export_{}", user_prefix, timestamp_suffix);
-    let edge_viz_table = format!("{}_entity_edge_visualization_export_{}", user_prefix, timestamp_suffix);
-    let group_table = format!("{}_entity_group_export_{}", user_prefix, timestamp_suffix);
+    // Updated table naming to include opinion: {user_prefix}_{opinion_name}_{table_suffix}_export_{timestamp}
+    let cluster_table = format!("{}_{}_entity_group_cluster_export_{}", user_prefix, opinion_name, timestamp_suffix);
+    let edge_viz_table = format!("{}_{}_entity_edge_visualization_export_{}", user_prefix, opinion_name, timestamp_suffix);
+    let group_table = format!("{}_{}_entity_group_export_{}", user_prefix, opinion_name, timestamp_suffix);
 
     // Create dataset filter clause for entities
     let (dataset_filter, filter_params) = create_dataset_filter_clause(
@@ -96,7 +99,7 @@ pub async fn fetch_organization_export_data(
         .collect();
 
     let rows = client.query(&query, &params).await
-        .context("Failed to fetch organization export data with dataset filtering")?;
+        .context("Failed to fetch organization export data with dataset filtering and opinion-based tables")?;
 
     let mut data = Vec::new();
     for row in rows {
@@ -111,24 +114,27 @@ pub async fn fetch_organization_export_data(
         });
     }
     
-    info!("Fetched {} organization records for export (filtered by whitelisted datasets).", data.len());
+    info!("Fetched {} organization records for export (filtered by whitelisted datasets, opinion: {}).", data.len(), opinion_name);
     Ok(data)
 }
 
 /// Fetches data for the service-level export.
-/// Now filters by team's whitelisted datasets
+/// Now filters by team's whitelisted datasets and uses opinion-based table naming
 pub async fn fetch_service_export_data(
     pool: &PgPool,
     user_prefix: &str,
+    opinion_name: &str,
     timestamp_suffix: &str,
     team_info: &TeamInfo,
 ) -> Result<Vec<ServiceExportRow>> {
-    info!("Fetching service export data for user '{}' filtered by whitelisted datasets...", user_prefix);
+    info!("Fetching service export data for user '{}' with opinion '{}' filtered by whitelisted datasets...", 
+          user_prefix, opinion_name);
     let client = pool.get().await.context("Failed to get DB client for service data fetch")?;
 
-    let cluster_table = format!("{}_service_group_cluster_export_{}", user_prefix, timestamp_suffix);
-    let edge_viz_table = format!("{}_service_edge_visualization_export_{}", user_prefix, timestamp_suffix);
-    let group_table = format!("{}_service_group_export_{}", user_prefix, timestamp_suffix);
+    // Updated table naming to include opinion: {user_prefix}_{opinion_name}_{table_suffix}_export_{timestamp}
+    let cluster_table = format!("{}_{}_service_group_cluster_export_{}", user_prefix, opinion_name, timestamp_suffix);
+    let edge_viz_table = format!("{}_{}_service_edge_visualization_export_{}", user_prefix, opinion_name, timestamp_suffix);
+    let group_table = format!("{}_{}_service_group_export_{}", user_prefix, opinion_name, timestamp_suffix);
 
     // The service edge visualization table uses 'service_group_cluster_id'
     let service_cluster_id_column_name = "service_group_cluster_id";
@@ -241,7 +247,7 @@ pub async fn fetch_service_export_data(
         .collect();
 
     let rows = client.query(&query, &params).await
-        .context("Failed to fetch service export data with dataset filtering")?;
+        .context("Failed to fetch service export data with dataset filtering and opinion-based tables")?;
 
     // Group rows by service_id to handle multiple taxonomy terms per service
     let mut service_map: HashMap<String, Vec<tokio_postgres::Row>> = HashMap::new();
@@ -251,7 +257,7 @@ pub async fn fetch_service_export_data(
         service_map.entry(service_id).or_insert_with(Vec::new).push(row);
     }
 
-    debug!("Grouped {} services with taxonomy data (filtered by whitelisted datasets)", service_map.len());
+    debug!("Grouped {} services with taxonomy data (filtered by whitelisted datasets, opinion: {})", service_map.len(), opinion_name);
 
     let mut data = Vec::new();
     for (_service_id, service_rows) in service_map {
@@ -305,6 +311,6 @@ pub async fn fetch_service_export_data(
         }
     });
     
-    info!("Fetched {} service records for export (filtered by whitelisted datasets).", data.len());
+    info!("Fetched {} service records for export (filtered by whitelisted datasets, opinion: {}).", data.len(), opinion_name);
     Ok(data)
 }
